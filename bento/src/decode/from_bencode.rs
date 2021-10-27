@@ -1,6 +1,4 @@
 use atoi::atoi;
-#[cfg(feature = "indexmap")]
-use indexmap::IndexMap;
 use std::{
     collections::HashMap,
     hash::{BuildHasher, Hash},
@@ -32,11 +30,7 @@ pub trait FromBencode {
 
 impl FromBencode for AsString<Vec<u8>> {
     fn decode(object: Object) -> Result<Self, DecodingError> {
-        object
-            .byte_string()
-            .map(Vec::from)
-            .map(AsString)
-            .ok_or(DecodingError::Unknown)
+        object.try_byte_string().map(Vec::from).map(AsString)
     }
 }
 
@@ -48,10 +42,7 @@ macro_rules! impl_from_bencode_for_num {
             where
                 Self: Sized,
             {
-                let number = object.integer().ok_or(DecodingError::Unknown)?;
-                let number = atoi(number).ok_or(DecodingError::Unknown)?;
-
-                Ok(number)
+                atoi(object.try_integer()?).ok_or(DecodingError::Unknown)
             }
         }
     )*}
@@ -64,7 +55,7 @@ impl<T: FromBencode> FromBencode for Vec<T> {
     where
         Self: Sized,
     {
-        let mut list = object.list().ok_or(DecodingError::Unknown)?;
+        let mut list = object.try_list()?;
         let mut results = Vec::new();
 
         while let Some(object) = list.next_object()? {
@@ -81,10 +72,8 @@ impl FromBencode for String {
     where
         Self: Sized,
     {
-        let content = object.byte_string().ok_or(DecodingError::Unknown)?;
-        let content = String::from_utf8(content.to_vec()).unwrap(); // TODO: map proper error
-
-        Ok(content)
+        // TODO: map proper error
+        String::from_utf8(object.try_byte_string()?.to_vec()).map_err(|_| DecodingError::Unknown)
     }
 }
 
@@ -98,7 +87,7 @@ where
     where
         Self: Sized,
     {
-        let mut dict = object.dictionary().ok_or(DecodingError::Unknown)?;
+        let mut dict = object.try_dictionary()?;
         let mut result = HashMap::default();
 
         while let Some((key, value)) = dict.next_pair()? {
@@ -113,7 +102,7 @@ where
 }
 
 #[cfg(feature = "indexmap")]
-impl<K, V, H> FromBencode for IndexMap<K, V, H>
+impl<K, V, H> FromBencode for indexmap::IndexMap<K, V, H>
 where
     K: FromBencode + Hash + Eq,
     V: FromBencode,
@@ -123,8 +112,8 @@ where
     where
         Self: Sized,
     {
-        let mut dict = object.dictionary().ok_or(DecodingError::Unknown)?;
-        let mut result = IndexMap::default();
+        let mut dict = object.try_dictionary()?;
+        let mut result = Self::default();
 
         while let Some((key, value)) = dict.next_pair()? {
             let key = K::decode(Object::ByteString(key))?;
@@ -134,5 +123,18 @@ where
         }
 
         Ok(result)
+    }
+}
+
+#[cfg(feature = "url")]
+impl FromBencode for url::Url {
+    fn decode(object: Object) -> Result<Self, DecodingError>
+    where
+        Self: Sized,
+    {
+        Self::parse(
+            std::str::from_utf8(object.try_byte_string()?).map_err(|_| DecodingError::Unknown)?,
+        )
+        .map_err(|_| DecodingError::Unknown) // TODO: map proper error
     }
 }

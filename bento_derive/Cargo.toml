@@ -1,0 +1,16 @@
+[package]
+name = "bento_derive"
+version = "0.1.0"
+authors = ["Federico Morrone <contact@morrone.dev>"]
+edition = "2021"
+
+[dependencies]
+quote = "1.0.10"
+syn = "1.0.80"
+
+[dev-dependencies]
+anyhow = "1.0.44"
+bento = { version = "0.1.0", path = "../bento" }
+
+[lib]
+proc-macro = true
