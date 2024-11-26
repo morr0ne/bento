@@ -53,7 +53,14 @@ pub struct PackageJson {
     pub dependencies: Option<HashMap<String, String>>,
     #[serde(rename = "devDependencies")]
     pub dev_dependencies: Option<HashMap<String, String>>,
-    pub bin: Option<HashMap<String, String>>,
+    pub bin: Option<Bin>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum Bin {
+    Single(String),
+    Multiple(HashMap<String, String>),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -129,17 +136,21 @@ fn install_package<'f>(
             .max()
             .expect("Failed to find a suitable version");
 
+        debug!("Downloading {package}@{version}");
+
         let version = metadata
             .versions
             .get(&version.to_string())
             .expect("internal error");
 
-        let name = format!("{}.balls", version.name);
+        let path = PathBuf::from("temp").join(&version.name);
+        fs::create_dir_all(path.parent().unwrap())?;
 
-        download(&version.dist.tarball, &name, client).await?;
+        download(&version.dist.tarball, &path, client).await?;
 
-        let file = fs::read(&name)?;
+        debug!("Downloaded");
 
+        let file = fs::read(&path)?;
         let hash = Sha1::digest(&file);
         let hex = base16ct::lower::encode_string(&hash);
 
@@ -147,10 +158,8 @@ fn install_package<'f>(
             bail!("Integrity failed")
         }
 
-        debug!("Downloaded {name}");
-
         // FIXME: mhhh yes reading the file a 3rd time is def not stupid
-        let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(name)?));
+        let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(path)?));
         archive.set_preserve_permissions(true);
         archive.set_unpack_xattrs(true);
 
@@ -212,7 +221,7 @@ fn unpack<R: Read, P: AsRef<Path>>(archive: &mut Archive<R>, output: P) -> Resul
     Ok(())
 }
 
-async fn download(url: &str, file_path: &str, client: &Client) -> Result<()> {
+async fn download(url: &str, file_path: impl AsRef<Path>, client: &Client) -> Result<()> {
     let response = client.get(url).send().await?;
 
     if !response.status().is_success() {
