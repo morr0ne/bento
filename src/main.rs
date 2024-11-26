@@ -1,4 +1,4 @@
-use std::fs;
+use std::{collections::BTreeMap, fs};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -32,7 +32,13 @@ fn main() {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct PackageJson {}
+pub struct PackageJson {
+    pub name: String,
+    pub version: String,
+    pub dependencies: Option<BTreeMap<String, String>>,
+    #[serde(rename = "devDependencies")]
+    pub dev_dependencies: Option<BTreeMap<String, String>>,
+}
 
 pub fn install() -> Result<()> {
     debug!("Reading package.json");
