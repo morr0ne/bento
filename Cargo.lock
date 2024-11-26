@@ -159,6 +159,7 @@ dependencies = [
  "base16ct",
  "clap",
  "flate2",
+ "futures-util",
  "indicatif",
  "reqwest",
  "semver",
