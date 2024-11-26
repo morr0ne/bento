@@ -1,3 +1,4 @@
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tracing::{debug, info};
 
@@ -20,7 +21,13 @@ fn main() {
 
     match cli.command {
         Commands::Install => {
-            info!("Installing...")
+            info!("Installing...");
+            install().expect("Failed to install");
+            info!("Installed")
         }
     }
+}
+
+pub fn install() -> Result<()> {
+    Ok(())
 }
