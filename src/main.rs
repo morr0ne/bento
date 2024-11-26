@@ -183,6 +183,23 @@ fn install_package<'f>(
             }
         }
 
+        if let Some(bin) = package_json.bin {
+            let bin_folder = current_dir()?.join(format!("bento_modules/.bin"));
+
+            fs::create_dir_all(&bin_folder)?;
+
+            match bin {
+                Bin::Single(path) => {
+                    fs::hard_link(output.join(path), bin_folder.join(package_json.name))?
+                }
+                Bin::Multiple(bins) => {
+                    for (bin, path) in bins {
+                        fs::hard_link(output.join(path), bin_folder.join(bin))?
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
     .boxed()
