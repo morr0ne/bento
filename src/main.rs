@@ -43,8 +43,11 @@ pub struct PackageJson {
     pub dev_dependencies: Option<BTreeMap<String, String>>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Metadata {}
+
 pub async fn install() -> Result<()> {
-    let mut client = Client::new();
+    let client = Client::new();
 
     debug!("Reading package.json");
     let package_json =
@@ -55,9 +58,13 @@ pub async fn install() -> Result<()> {
     dbg!(&package_json);
 
     if let Some(dev_dependencies) = package_json.dev_dependencies {
-        for (dep, version) in dev_dependencies {
-            let metadata: Value = client
-                .get(format!("https://registry.npmjs.org/{dep}/{version}"))
+        for (dep, _version) in dev_dependencies {
+            let metadata: Metadata = client
+                .get(format!("https://registry.npmjs.org/{dep}"))
+                .header(
+                    "Accept",
+                    "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+                )
                 .send()
                 .await?
                 .json()
