@@ -9,6 +9,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use flate2::read::GzDecoder;
+use indicatif::ProgressBar;
 use reqwest::Client;
 use semver::{Version as SemverVersion, VersionReq};
 use serde::{Deserialize, Serialize};
@@ -198,6 +199,7 @@ async fn download(url: &str, file_path: &str, client: &Client) -> Result<()> {
     }
 
     let total_size = response.content_length().unwrap_or(0);
+    let pb = ProgressBar::new(total_size);
 
     let mut file = File::create(file_path)?;
     let mut downloaded = 0;
@@ -208,10 +210,8 @@ async fn download(url: &str, file_path: &str, client: &Client) -> Result<()> {
         file.write_all(&chunk)?;
 
         downloaded += chunk.len();
-        if total_size > 0 {
-            let progress = (downloaded as f64 / total_size as f64) * 100.0;
-            println!("Download progress: {:.1}%", progress);
-        }
+
+        pb.set_position(downloaded as u64);
     }
 
     file.flush()?;
