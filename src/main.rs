@@ -1,17 +1,21 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    env::current_dir,
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use flate2::read::GzDecoder;
 use reqwest::Client;
 use semver::{Version as SemverVersion, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
-use tokio::{
-    fs::{self, File},
-    io::AsyncWriteExt,
-};
+use tar::Archive;
 use tokio_stream::StreamExt;
-use tracing::{debug, info};
+use tracing::debug;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -33,9 +37,9 @@ async fn main() {
 
     match cli.command {
         Commands::Install => {
-            info!("Installing...");
+            println!("📦 Installing dependencies...");
             install().await.expect("Failed to install");
-            info!("Installed")
+            println!("✨ Done!");
         }
     }
 }
@@ -76,9 +80,8 @@ pub async fn install() -> Result<()> {
     let client = Client::new();
 
     debug!("Reading package.json");
-    let package_json = fs::read(std::env::current_dir()?.join("package.json"))
-        .await
-        .context("Missing package.json")?;
+    let package_json =
+        fs::read(std::env::current_dir()?.join("package.json")).context("Missing package.json")?;
     let package_json: PackageJson =
         serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
@@ -121,7 +124,7 @@ pub async fn install() -> Result<()> {
 
             download(&version.dist.tarball, &name, &client).await?;
 
-            let file = fs::read(&name).await?;
+            let file = fs::read(&name)?;
 
             let hash = Sha1::digest(&file);
             let hex = base16ct::lower::encode_string(&hash);
@@ -130,8 +133,57 @@ pub async fn install() -> Result<()> {
                 bail!("Integrity failed")
             }
 
-            debug!("Downloaded {name}")
+            debug!("Downloaded {name}");
+
+            // FIXME: mhhh yes reading the file a 3rd time is def not stupid
+            let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(name)?));
+            archive.set_preserve_permissions(true);
+            archive.set_unpack_xattrs(true);
+
+            unpack(
+                &mut archive,
+                current_dir()?.join(format!("bento_modules/{}", version.name)),
+            )?;
         }
+    }
+
+    Ok(())
+}
+
+fn unpack<R: Read, P: AsRef<Path>>(archive: &mut Archive<R>, output: P) -> Result<()> {
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?;
+
+        // Convert path components to string representation
+        let components: Vec<_> = path.components().collect();
+
+        // Skip if there are no components after the root
+        if components.len() <= 1 {
+            continue;
+        }
+
+        // Create the new path without the root directory
+        let path: PathBuf = components[1..].iter().collect();
+
+        // Sanitize the path to prevent directory traversal
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            bail!(
+                "Invalid path with parent directory references: {}",
+                path.display()
+            );
+        }
+
+        let output_path = output.as_ref().join(&path);
+
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        entry.unpack(output_path)?;
     }
 
     Ok(())
@@ -146,13 +198,13 @@ async fn download(url: &str, file_path: &str, client: &Client) -> Result<()> {
 
     let total_size = response.content_length().unwrap_or(0);
 
-    let mut file = File::create(file_path).await?;
+    let mut file = File::create(file_path)?;
     let mut downloaded = 0;
     let mut stream = response.bytes_stream();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
-        file.write_all(&chunk).await?;
+        file.write_all(&chunk)?;
 
         downloaded += chunk.len();
         if total_size > 0 {
@@ -161,7 +213,7 @@ async fn download(url: &str, file_path: &str, client: &Client) -> Result<()> {
         }
     }
 
-    file.flush().await?;
+    file.flush()?;
 
     Ok(())
 }
