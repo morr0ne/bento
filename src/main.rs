@@ -2,7 +2,9 @@ use std::{collections::BTreeMap, fs};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tracing::{debug, info};
 
 #[derive(Parser)]
@@ -17,7 +19,8 @@ enum Commands {
     Install,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     tracing_subscriber::fmt::init();
 
     let cli = Cli::parse();
@@ -25,7 +28,7 @@ fn main() {
     match cli.command {
         Commands::Install => {
             info!("Installing...");
-            install().expect("Failed to install");
+            install().await.expect("Failed to install");
             info!("Installed")
         }
     }
@@ -40,14 +43,29 @@ pub struct PackageJson {
     pub dev_dependencies: Option<BTreeMap<String, String>>,
 }
 
-pub fn install() -> Result<()> {
+pub async fn install() -> Result<()> {
+    let mut client = Client::new();
+
     debug!("Reading package.json");
     let package_json =
         fs::read(std::env::current_dir()?.join("package.json")).context("Missing package.json")?;
     let package_json: PackageJson =
         serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
-    dbg!(package_json);
+    dbg!(&package_json);
+
+    if let Some(dev_dependencies) = package_json.dev_dependencies {
+        for (dep, version) in dev_dependencies {
+            let metadata: Value = client
+                .get(format!("https://registry.npmjs.org/{dep}/{version}"))
+                .send()
+                .await?
+                .json()
+                .await?;
+
+            dbg!(metadata);
+        }
+    }
 
     Ok(())
 }
