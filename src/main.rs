@@ -3,6 +3,7 @@ use std::{
     env::current_dir,
     fs::{self, File},
     io::{Read, Write},
+    os::unix::fs::symlink,
     path::{Path, PathBuf},
 };
 
@@ -53,6 +54,8 @@ pub struct PackageJson {
     pub dependencies: Option<HashMap<String, String>>,
     #[serde(rename = "devDependencies")]
     pub dev_dependencies: Option<HashMap<String, String>>,
+    #[serde(rename = "optionalDependencies")]
+    pub optional_dependencies: Option<HashMap<String, String>>,
     pub bin: Option<Bin>,
 }
 
@@ -95,14 +98,20 @@ pub async fn install() -> Result<()> {
     let package_json: PackageJson =
         serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
-    if let Some(dev_dependencies) = package_json.dependencies {
-        for (package, req) in dev_dependencies {
+    if let Some(dependencies) = package_json.dependencies {
+        for (package, req) in dependencies {
             install_package(&mut client, &package, &req).await?;
         }
     }
 
-    if let Some(dev_dependencies) = package_json.dev_dependencies {
-        for (package, req) in dev_dependencies {
+    if let Some(dependencies) = package_json.dev_dependencies {
+        for (package, req) in dependencies {
+            install_package(&mut client, &package, &req).await?;
+        }
+    }
+
+    if let Some(dependencies) = package_json.optional_dependencies {
+        for (package, req) in dependencies {
             install_package(&mut client, &package, &req).await?;
         }
     }
@@ -169,7 +178,7 @@ fn install_package<'f>(
         archive.set_preserve_permissions(true);
         archive.set_unpack_xattrs(true);
 
-        let output = current_dir()?.join(format!("bento_modules/{}", version.name));
+        let output = current_dir()?.join(format!("node_modules/{}", version.name));
 
         unpack(&mut archive, &output)?;
 
@@ -177,24 +186,30 @@ fn install_package<'f>(
         let package_json: PackageJson =
             serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
-        if let Some(dev_dependencies) = package_json.dependencies {
-            for (package, req) in dev_dependencies {
+        if let Some(dependencies) = package_json.dependencies {
+            for (package, req) in dependencies {
+                install_package(client, &package, &req).await?;
+            }
+        }
+
+        if let Some(dependencies) = package_json.optional_dependencies {
+            for (package, req) in dependencies {
                 install_package(client, &package, &req).await?;
             }
         }
 
         if let Some(bin) = package_json.bin {
-            let bin_folder = current_dir()?.join(format!("bento_modules/.bin"));
+            let bin_folder = current_dir()?.join(format!("node_modules/.bin"));
 
             fs::create_dir_all(&bin_folder)?;
 
             match bin {
                 Bin::Single(path) => {
-                    fs::hard_link(output.join(path), bin_folder.join(package_json.name))?
+                    symlink(output.join(path), bin_folder.join(package_json.name))?
                 }
                 Bin::Multiple(bins) => {
                     for (bin, path) in bins {
-                        fs::hard_link(output.join(path), bin_folder.join(bin))?
+                        symlink(output.join(path), bin_folder.join(bin))?
                     }
                 }
             }
