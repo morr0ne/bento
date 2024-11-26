@@ -9,6 +9,7 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use flate2::read::GzDecoder;
+use futures_util::{future::BoxFuture, FutureExt};
 use indicatif::ProgressBar;
 use reqwest::Client;
 use semver::{Version as SemverVersion, VersionReq};
@@ -79,7 +80,7 @@ pub struct Dist {
 }
 
 pub async fn install() -> Result<()> {
-    let client = Client::new();
+    let mut client = Client::new();
 
     debug!("Reading package.json");
     let package_json =
@@ -87,69 +88,89 @@ pub async fn install() -> Result<()> {
     let package_json: PackageJson =
         serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
-    dbg!(&package_json);
-
     if let Some(dev_dependencies) = package_json.dev_dependencies {
-        for (dep, req) in dev_dependencies {
-            let req = VersionReq::parse(&req).context("Invalid semver requirement")?;
-
-            debug!("Fetching metadata");
-
-            let metadata: Metadata = client
-                .get(format!("https://registry.npmjs.org/{dep}"))
-                .header(
-                    "Accept",
-                    "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-                )
-                .send()
-                .await?
-                .json()
-                .await?;
-
-            debug!("Searching for version {req}");
-
-            // FIXME: keep the original version instead of doing an encoding roundtrip
-            let version = metadata
-                .versions
-                .keys()
-                .filter_map(|v| SemverVersion::parse(v.as_str()).ok())
-                .filter(|v| req.matches(v))
-                .max()
-                .expect("Failed to find a suitable version");
-
-            let version = metadata
-                .versions
-                .get(&version.to_string())
-                .expect("internal error");
-
-            let name = format!("{}.balls", version.name);
-
-            download(&version.dist.tarball, &name, &client).await?;
-
-            let file = fs::read(&name)?;
-
-            let hash = Sha1::digest(&file);
-            let hex = base16ct::lower::encode_string(&hash);
-
-            if hex != version.dist.shasum {
-                bail!("Integrity failed")
-            }
-
-            debug!("Downloaded {name}");
-
-            // FIXME: mhhh yes reading the file a 3rd time is def not stupid
-            let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(name)?));
-            archive.set_preserve_permissions(true);
-            archive.set_unpack_xattrs(true);
-
-            unpack(
-                &mut archive,
-                current_dir()?.join(format!("bento_modules/{}", version.name)),
-            )?;
+        for (package, req) in dev_dependencies {
+            install_package(&mut client, &package, &req).await?;
         }
     }
 
     Ok(())
+}
+
+fn install_package<'f>(
+    client: &'f mut Client,
+    package: &'f str,
+    req: &'f str,
+) -> BoxFuture<'f, Result<()>> {
+    async move {
+        let req = VersionReq::parse(&req).context("Invalid semver requirement")?;
+
+        debug!("Fetching metadata");
+
+        let metadata: Metadata = client
+            .get(format!("https://registry.npmjs.org/{package}"))
+            .header(
+                "Accept",
+                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+            )
+            .send()
+            .await?
+            .json()
+            .await?;
+
+        debug!("Searching for version {req}");
+
+        // FIXME: keep the original version instead of doing an encoding roundtrip
+        let version = metadata
+            .versions
+            .keys()
+            .filter_map(|v| SemverVersion::parse(v.as_str()).ok())
+            .filter(|v| req.matches(v))
+            .max()
+            .expect("Failed to find a suitable version");
+
+        let version = metadata
+            .versions
+            .get(&version.to_string())
+            .expect("internal error");
+
+        let name = format!("{}.balls", version.name);
+
+        download(&version.dist.tarball, &name, client).await?;
+
+        let file = fs::read(&name)?;
+
+        let hash = Sha1::digest(&file);
+        let hex = base16ct::lower::encode_string(&hash);
+
+        if hex != version.dist.shasum {
+            bail!("Integrity failed")
+        }
+
+        debug!("Downloaded {name}");
+
+        // FIXME: mhhh yes reading the file a 3rd time is def not stupid
+        let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(name)?));
+        archive.set_preserve_permissions(true);
+        archive.set_unpack_xattrs(true);
+
+        let output = current_dir()?.join(format!("bento_modules/{}", version.name));
+
+        unpack(&mut archive, &output)?;
+
+        let package_json = fs::read(output.join("package.json")).context("Missing package.json")?;
+        let package_json: PackageJson =
+            serde_json::from_slice(&package_json).context("Invalid package.json")?;
+
+        if let Some(dev_dependencies) = package_json.dependencies {
+            for (package, req) in dev_dependencies {
+                install_package(client, &package, &req).await?;
+            }
+        }
+
+        Ok(())
+    }
+    .boxed()
 }
 
 fn unpack<R: Read, P: AsRef<Path>>(archive: &mut Archive<R>, output: P) -> Result<()> {
