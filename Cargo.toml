@@ -10,6 +10,7 @@ strip = true
 
 [dependencies]
 anyhow = "1.0.93"
+base16ct = { version = "0.2.0", features = ["std"] }
 clap = { version = "4.5.21", features = [
     "cargo",
     "derive",
@@ -17,10 +18,12 @@ clap = { version = "4.5.21", features = [
     "unicode",
     "wrap_help",
 ] }
-reqwest = { version = "0.12.9", features = ["gzip", "brotli", "zstd", "deflate", "json"] }
+reqwest = { version = "0.12.9", features = ["gzip", "brotli", "zstd", "deflate", "json", "stream"] }
 semver = "1.0.23"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
+sha1 = "0.10.6"
 tokio = { version = "1.41.1", features = ["rt-multi-thread", "macros"] }
+tokio-stream = { version = "0.1.16", default-features = false }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter", "tracing-log"] }
