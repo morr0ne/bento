@@ -3,6 +3,7 @@ use std::{collections::HashMap, fs};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::Client;
+use semver::{Version as SemverVersion, VersionReq};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
@@ -77,7 +78,11 @@ pub async fn install() -> Result<()> {
     dbg!(&package_json);
 
     if let Some(dev_dependencies) = package_json.dev_dependencies {
-        for (dep, _version) in dev_dependencies {
+        for (dep, req) in dev_dependencies {
+            let req = VersionReq::parse(&req).context("Invalid semver requirement")?;
+
+            debug!("Fetching metadata");
+
             let metadata: Metadata = client
                 .get(format!("https://registry.npmjs.org/{dep}"))
                 .header(
@@ -89,7 +94,23 @@ pub async fn install() -> Result<()> {
                 .json()
                 .await?;
 
-            dbg!(metadata);
+            debug!("Searching for version {req}");
+
+            // FIXME: keep the original version instead of doing an encoding roundtrip
+            let version = metadata
+                .versions
+                .keys()
+                .filter_map(|v| SemverVersion::parse(v.as_str()).ok())
+                .filter(|v| req.matches(v))
+                .max()
+                .expect("Failed to find a suitable version");
+
+            let version = metadata
+                .versions
+                .get(&version.to_string())
+                .expect("internal error");
+
+            dbg!(version);
         }
     }
 
