@@ -95,6 +95,12 @@ pub async fn install() -> Result<()> {
     let package_json: PackageJson =
         serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
+    if let Some(dev_dependencies) = package_json.dependencies {
+        for (package, req) in dev_dependencies {
+            install_package(&mut client, &package, &req).await?;
+        }
+    }
+
     if let Some(dev_dependencies) = package_json.dev_dependencies {
         for (package, req) in dev_dependencies {
             install_package(&mut client, &package, &req).await?;
