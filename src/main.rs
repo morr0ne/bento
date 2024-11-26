@@ -51,6 +51,7 @@ pub struct PackageJson {
     pub dependencies: Option<HashMap<String, String>>,
     #[serde(rename = "devDependencies")]
     pub dev_dependencies: Option<HashMap<String, String>>,
+    pub bin: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
