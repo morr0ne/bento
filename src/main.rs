@@ -269,11 +269,23 @@ fn install_package<'f>(
 
             match bin {
                 Bin::Single(path) => {
-                    symlink(output.join(path), bin_folder.join(package_json.name))?
+                    let link = bin_folder.join(package_json.name);
+
+                    if link.exists() {
+                        fs::remove_file(&link)?;
+                    }
+
+                    symlink(output.join(path), link)?
                 }
                 Bin::Multiple(bins) => {
                     for (bin, path) in bins {
-                        symlink(output.join(path), bin_folder.join(bin))?
+                        let link = bin_folder.join(bin);
+
+                        if link.exists() {
+                            fs::remove_file(&link)?;
+                        }
+
+                        symlink(output.join(path), link)?
                     }
                 }
             }
