@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use tracing::{debug, info};
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -13,11 +14,13 @@ enum Commands {
 }
 
 fn main() {
+    tracing_subscriber::fmt::init();
+
     let cli = Cli::parse();
 
     match cli.command {
         Commands::Install => {
-            println!("Installing...")
+            info!("Installing...")
         }
     }
 }
