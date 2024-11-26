@@ -1,10 +1,16 @@
-use std::{collections::HashMap, fs};
+use std::collections::HashMap;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use semver::{Version as SemverVersion, VersionReq};
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
+use tokio::{
+    fs::{self, File},
+    io::AsyncWriteExt,
+};
+use tokio_stream::StreamExt;
 use tracing::{debug, info};
 
 #[derive(Parser)]
@@ -70,8 +76,9 @@ pub async fn install() -> Result<()> {
     let client = Client::new();
 
     debug!("Reading package.json");
-    let package_json =
-        fs::read(std::env::current_dir()?.join("package.json")).context("Missing package.json")?;
+    let package_json = fs::read(std::env::current_dir()?.join("package.json"))
+        .await
+        .context("Missing package.json")?;
     let package_json: PackageJson =
         serde_json::from_slice(&package_json).context("Invalid package.json")?;
 
@@ -110,9 +117,51 @@ pub async fn install() -> Result<()> {
                 .get(&version.to_string())
                 .expect("internal error");
 
-            dbg!(version);
+            let name = format!("{}.balls", version.name);
+
+            download(&version.dist.tarball, &name, &client).await?;
+
+            let file = fs::read(&name).await?;
+
+            let hash = Sha1::digest(&file);
+            let hex = base16ct::lower::encode_string(&hash);
+
+            if hex != version.dist.shasum {
+                bail!("Integrity failed")
+            }
+
+            debug!("Downloaded {name}")
         }
     }
+
+    Ok(())
+}
+
+async fn download(url: &str, file_path: &str, client: &Client) -> Result<()> {
+    let response = client.get(url).send().await?;
+
+    if !response.status().is_success() {
+        bail!("Failed to download: HTTP {}", response.status());
+    }
+
+    let total_size = response.content_length().unwrap_or(0);
+
+    let mut file = File::create(file_path).await?;
+    let mut downloaded = 0;
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
+
+        downloaded += chunk.len();
+        if total_size > 0 {
+            let progress = (downloaded as f64 / total_size as f64) * 100.0;
+            println!("Download progress: {:.1}%", progress);
+        }
+    }
+
+    file.flush().await?;
 
     Ok(())
 }
