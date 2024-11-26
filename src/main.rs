@@ -1,10 +1,9 @@
-use std::{collections::BTreeMap, fs};
+use std::{collections::HashMap, fs};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tracing::{debug, info};
 
 #[derive(Parser)]
@@ -38,13 +37,33 @@ async fn main() {
 pub struct PackageJson {
     pub name: String,
     pub version: String,
-    pub dependencies: Option<BTreeMap<String, String>>,
+    pub dependencies: Option<HashMap<String, String>>,
     #[serde(rename = "devDependencies")]
-    pub dev_dependencies: Option<BTreeMap<String, String>>,
+    pub dev_dependencies: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Metadata {}
+pub struct Metadata {
+    pub name: String,
+    pub modified: String,
+    #[serde(rename = "dist-tags")]
+    pub dist_tags: HashMap<String, String>,
+    pub versions: HashMap<String, Version>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Version {
+    pub name: String,
+    pub version: String,
+    pub dist: Dist,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Dist {
+    pub tarball: String,
+    pub shasum: String,
+    pub integrity: Option<String>,
+}
 
 pub async fn install() -> Result<()> {
     let client = Client::new();
