@@ -15,7 +15,6 @@ use futures_util::{future::BoxFuture, FutureExt};
 use indicatif::ProgressBar;
 use owo_colors::OwoColorize;
 use reqwest::Client;
-use semver::{Version as SemverVersion, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use tar::Archive;
@@ -189,7 +188,8 @@ fn install_package<'f>(
     req: &'f str,
 ) -> BoxFuture<'f, Result<()>> {
     async move {
-        let req = VersionReq::parse(&req).context("Invalid semver requirement")?;
+        let req =
+            deno_semver::npm::parse_npm_version_req(&req).context("Invalid semver requirement")?;
 
         debug!("Fetching metadata");
 
@@ -210,7 +210,7 @@ fn install_package<'f>(
         let version = metadata
             .versions
             .keys()
-            .filter_map(|v| SemverVersion::parse(v.as_str()).ok())
+            .filter_map(|v| deno_semver::npm::parse_npm_version(v.as_str()).ok())
             .filter(|v| req.matches(v))
             .max()
             .expect("Failed to find a suitable version");
