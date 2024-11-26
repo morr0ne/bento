@@ -1,5 +1,8 @@
-use anyhow::Result;
+use std::fs;
+
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 #[derive(Parser)]
@@ -28,6 +31,17 @@ fn main() {
     }
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct PackageJson {}
+
 pub fn install() -> Result<()> {
+    debug!("Reading package.json");
+    let package_json =
+        fs::read(std::env::current_dir()?.join("package.json")).context("Missing package.json")?;
+    let package_json: PackageJson =
+        serde_json::from_slice(&package_json).context("Invalid package.json")?;
+
+    dbg!(package_json);
+
     Ok(())
 }
