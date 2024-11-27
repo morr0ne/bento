@@ -11,7 +11,6 @@ use std::{
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use flate2::read::GzDecoder;
-use futures_util::{future::BoxFuture, FutureExt};
 use indicatif::ProgressBar;
 use owo_colors::OwoColorize;
 use reqwest::Client;
@@ -182,94 +181,99 @@ pub async fn install() -> Result<()> {
     Ok(())
 }
 
-fn install_package<'f>(
-    client: &'f mut Client,
-    package: &'f str,
-    req: &'f str,
-) -> BoxFuture<'f, Result<()>> {
-    async move {
-        let req =
-            deno_semver::npm::parse_npm_version_req(&req).context("Invalid semver requirement")?;
+async fn install_package<'f>(client: &'f mut Client, package: &'f str, req: &'f str) -> Result<()> {
+    let req =
+        deno_semver::npm::parse_npm_version_req(&req).context("Invalid semver requirement")?;
 
-        debug!("Fetching metadata");
+    debug!("Fetching metadata");
 
-        let metadata: Metadata = client
-            .get(format!("https://registry.npmjs.org/{package}"))
-            .header(
-                "Accept",
-                "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-            )
-            .send()
-            .await?
-            .json()
-            .await?;
+    let metadata: Metadata = client
+        .get(format!("https://registry.npmjs.org/{package}"))
+        .header(
+            "Accept",
+            "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+        )
+        .send()
+        .await?
+        .json()
+        .await?;
 
-        debug!("Searching for version {req}");
+    debug!("Searching for version {req}");
 
-        // FIXME: keep the original version instead of doing an encoding roundtrip
-        let version = metadata
-            .versions
-            .keys()
-            .filter_map(|v| deno_semver::npm::parse_npm_version(v.as_str()).ok())
-            .filter(|v| req.matches(v))
-            .max()
-            .expect("Failed to find a suitable version");
+    // FIXME: keep the original version instead of doing an encoding roundtrip
+    let version = metadata
+        .versions
+        .keys()
+        .filter_map(|v| deno_semver::npm::parse_npm_version(v.as_str()).ok())
+        .filter(|v| req.matches(v))
+        .max()
+        .expect("Failed to find a suitable version");
 
-        debug!("Downloading {package}@{version}");
+    debug!("Downloading {package}@{version}");
 
-        let version = metadata
-            .versions
-            .get(&version.to_string())
-            .expect("internal error");
+    let version = metadata
+        .versions
+        .get(&version.to_string())
+        .expect("internal error");
 
-        let path = PathBuf::from("temp").join(&version.name);
-        fs::create_dir_all(path.parent().unwrap())?;
+    let path = PathBuf::from("temp").join(&version.name);
+    fs::create_dir_all(path.parent().unwrap())?;
 
-        download(&version.dist.tarball, &path, client).await?;
+    download(&version.dist.tarball, &path, client).await?;
 
-        debug!("Downloaded");
+    debug!("Downloaded");
 
-        let file = fs::read(&path)?;
-        let hash = Sha1::digest(&file);
-        let hex = base16ct::lower::encode_string(&hash);
+    let file = fs::read(&path)?;
+    let hash = Sha1::digest(&file);
+    let hex = base16ct::lower::encode_string(&hash);
 
-        if hex != version.dist.shasum {
-            bail!("Integrity failed")
+    if hex != version.dist.shasum {
+        bail!("Integrity failed")
+    }
+
+    // FIXME: mhhh yes reading the file a 3rd time is def not stupid
+    let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(path)?));
+    archive.set_preserve_permissions(true);
+    archive.set_unpack_xattrs(true);
+
+    let output = current_dir()?.join(format!("node_modules/{}", version.name));
+
+    unpack(&mut archive, &output)?;
+
+    let package_json = fs::read(output.join("package.json")).context("Missing package.json")?;
+    let package_json: PackageJson =
+        serde_json::from_slice(&package_json).context("Invalid package.json")?;
+
+    if let Some(dependencies) = package_json.dependencies {
+        for (package, req) in dependencies {
+            Box::pin(install_package(client, &package, &req)).await?;
         }
+    }
 
-        // FIXME: mhhh yes reading the file a 3rd time is def not stupid
-        let mut archive = Archive::new(GzDecoder::new(std::fs::File::open(path)?));
-        archive.set_preserve_permissions(true);
-        archive.set_unpack_xattrs(true);
+    if let Some(dependencies) = package_json.optional_dependencies {
+        for (package, req) in dependencies {
+            Box::pin(install_package(client, &package, &req)).await?;
+        }
+    }
 
-        let output = current_dir()?.join(format!("node_modules/{}", version.name));
+    if let Some(bin) = package_json.bin {
+        let bin_folder = current_dir()?.join(format!("node_modules/.bin"));
 
-        unpack(&mut archive, &output)?;
+        fs::create_dir_all(&bin_folder)?;
 
-        let package_json = fs::read(output.join("package.json")).context("Missing package.json")?;
-        let package_json: PackageJson =
-            serde_json::from_slice(&package_json).context("Invalid package.json")?;
+        match bin {
+            Bin::Single(path) => {
+                let link = bin_folder.join(package_json.name);
 
-        if let Some(dependencies) = package_json.dependencies {
-            for (package, req) in dependencies {
-                install_package(client, &package, &req).await?;
+                if link.exists() {
+                    fs::remove_file(&link)?;
+                }
+
+                symlink(output.join(path), link)?
             }
-        }
-
-        if let Some(dependencies) = package_json.optional_dependencies {
-            for (package, req) in dependencies {
-                install_package(client, &package, &req).await?;
-            }
-        }
-
-        if let Some(bin) = package_json.bin {
-            let bin_folder = current_dir()?.join(format!("node_modules/.bin"));
-
-            fs::create_dir_all(&bin_folder)?;
-
-            match bin {
-                Bin::Single(path) => {
-                    let link = bin_folder.join(package_json.name);
+            Bin::Multiple(bins) => {
+                for (bin, path) in bins {
+                    let link = bin_folder.join(bin);
 
                     if link.exists() {
                         fs::remove_file(&link)?;
@@ -277,23 +281,11 @@ fn install_package<'f>(
 
                     symlink(output.join(path), link)?
                 }
-                Bin::Multiple(bins) => {
-                    for (bin, path) in bins {
-                        let link = bin_folder.join(bin);
-
-                        if link.exists() {
-                            fs::remove_file(&link)?;
-                        }
-
-                        symlink(output.join(path), link)?
-                    }
-                }
             }
         }
-
-        Ok(())
     }
-    .boxed()
+
+    Ok(())
 }
 
 fn unpack<R: Read, P: AsRef<Path>>(archive: &mut Archive<R>, output: P) -> Result<()> {
