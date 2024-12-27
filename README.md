@@ -1,4 +1,4 @@
-# Bento - A Home-Made NPM Package Manager
+# Bento - A home-made npm package manager
 
 Bento is a lightweight, Rust-based package manager that's fully compatible with
 NPM. The current version supports core package management features including:
