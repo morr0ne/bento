@@ -23,14 +23,10 @@ async fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Install => {
-            println!("📦 Installing dependencies...");
-            install::install().await.expect("Failed to install");
-            println!("✨ Done!");
-        }
-        Commands::Run { script } => {
-            run::run(script).expect("Failed to run script");
-        }
-    }
+    let res = match cli.command {
+        Commands::Install => install::install().await,
+        Commands::Run { script } => run::run(script),
+    };
+
+    res.expect("Failed") // FIXME: handle errors better
 }
