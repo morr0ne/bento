@@ -65,6 +65,8 @@ pub struct Dist {
 }
 
 pub async fn install() -> Result<()> {
+    println!("📦 Installing dependencies...");
+
     let mut client = Client::new();
 
     debug!("Reading package.json");
@@ -90,6 +92,8 @@ pub async fn install() -> Result<()> {
             install_package(&mut client, &package, &req).await?;
         }
     }
+
+    println!("✨ Done!");
 
     Ok(())
 }
